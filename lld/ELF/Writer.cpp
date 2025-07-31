@@ -1913,13 +1913,15 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
                             : 0x800;
         // 3) 在 startAddr + gpOffset 上定义 __global_pointer$
         //    （如果有 .sdata，就用它的 section，否则用 ELF header）
-        OutputSection *baseSec = findSection(".sdata");
+        // OutputSection *baseSec = findSection(".sdata");
         addOptionalRegular("__global_pointer$",
-                           baseSec ? baseSec : Out::elfHeader,
-                           gpOffset, STV_DEFAULT);
+                           Out::elfHeader,
+                           startAddr + gpOffset,
+                            STV_DEFAULT);
 
         // 4) 如果启用了 relaxGP，就把符号绑定到 ElfSym
-        if (config->relaxGP) {
+        //if (config->relaxGP) 
+        {
           if (Symbol *s = symtab.find("__global_pointer$"))
             if (s->isDefined())
               ElfSym::riscvGlobalPointer = cast<Defined>(s);
