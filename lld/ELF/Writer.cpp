@@ -1873,19 +1873,55 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     // should only be defined in an executable. If .sdata does not exist, its
     // value/section does not matter but it has to be relative, so set its
     // st_shndx arbitrarily to 1 (Out::elfHeader).
-    if (config->emachine == EM_RISCV) {
+
+    //修改位置 
+    //原有代码
+    // if (config->emachine == EM_RISCV) {
+    //   ElfSym::riscvGlobalPointer = nullptr;
+    //   if (!config->shared) {
+    //     OutputSection *sec = findSection(".sdata");
+    //     addOptionalRegular(
+    //         "__global_pointer$", sec ? sec : Out::elfHeader, 0x800, STV_DEFAULT);
+    //     // Set riscvGlobalPointer to be used by the optional global pointer
+    //     // relaxation.
+    //     if (config->relaxGP) {
+    //       Symbol *s = symtab.find("__global_pointer$");
+    //       if (s && s->isDefined())
+    //         ElfSym::riscvGlobalPointer = cast<Defined>(s);
+    //     }
+    //   }
+    // }
+    //替换代码
+    if(config->emachine == EM_RISCV)
+    {
       ElfSym::riscvGlobalPointer = nullptr;
-      if (!config->shared) {
-        OutputSection *sec = findSection(".sdata");
-        addOptionalRegular(
-            "__global_pointer$", sec ? sec : Out::elfHeader, 0x800, STV_DEFAULT);
-        // Set riscvGlobalPointer to be used by the optional global pointer
-        // relaxation.
-        if (config->relaxGP) {
-          Symbol *s = symtab.find("__global_pointer$");
-          if (s && s->isDefined())
-            ElfSym::riscvGlobalPointer = cast<Defined>(s);
+      if(!config->shared){
+        //扫描小数据段,计算开始和结束地址
+        uint64_t startAddr = UINT64_MAX, endAddr =  0;
+        for(OutputSection *sec : outputSections){
+          StringRef n = sec->name;
+          if(n==".data"||n.startswith(".sdata")||
+              n == ".srodata" || n.startswith(".srodata."))startAddr = std::min(startAddr, sec->addr);
+          if (n == ".sbss"    || n.startswith(".sbss.")    ||
+              n == ".bss"     || n.startswith(".bss.")) endAddr   = std::max(endAddr,   sec->addr + sec->size);
         }
+        if (startAddr == UINT64_MAX) startAddr = Out::elfHeader->addr;
+        uint64_t gpOffset = (endAddr > startAddr)
+                            ? ((endAddr - startAddr) / 2)
+                            : 0x800;
+        // 3) 在 startAddr + gpOffset 上定义 __global_pointer$
+        //    （如果有 .sdata，就用它的 section，否则用 ELF header）
+        OutputSection *baseSec = findSection(".sdata");
+        addOptionalRegular("__global_pointer$",
+                           baseSec ? baseSec : Out::elfHeader,
+                           gpOffset, STV_DEFAULT);
+
+        // 4) 如果启用了 relaxGP，就把符号绑定到 ElfSym
+        if (config->relaxGP) {
+          if (Symbol *s = symtab.find("__global_pointer$"))
+            if (s->isDefined())
+              ElfSym::riscvGlobalPointer = cast<Defined>(s);
+        }                    
       }
     }
 
