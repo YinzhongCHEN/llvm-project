@@ -32,6 +32,10 @@
 #include "llvm/Support/xxhash.h"
 #include <climits>
 
+//增加头文件
+#include<vector>
+#include<algorithm>
+
 #define DEBUG_TYPE "lld"
 
 using namespace llvm;
