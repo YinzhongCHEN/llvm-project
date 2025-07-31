@@ -1899,13 +1899,15 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
         //扫描小数据段,计算开始和结束地址
         uint64_t startAddr = UINT64_MAX, endAddr =  0;
         for(OutputSection *sec : outputSections){
-          StringRef n = sec->name;
-          if(n==".data"||n.startswith(".sdata")||
-              n == ".srodata" || n.startswith(".srodata."))startAddr = std::min(startAddr, sec->addr);
-          if (n == ".sbss"    || n.startswith(".sbss.")    ||
-              n == ".bss"     || n.startswith(".bss.")) endAddr   = std::max(endAddr,   sec->addr + sec->size);
+          // 只选那些要载入内存且不是可执行代码的段
+          if (!(sec->flags & SHF_ALLOC) || (sec->flags & SHF_EXECINSTR))
+            continue;
+          startAddr = std::min(startAddr, sec->addr);
+          endAddr   = std::max(endAddr, sec->addr + sec->size);
         }
+        //如果没有小数据段那么退回到elfheader地址
         if (startAddr == UINT64_MAX) startAddr = Out::elfHeader->addr;
+        //中点偏移
         uint64_t gpOffset = (endAddr > startAddr)
                             ? ((endAddr - startAddr) / 2)
                             : 0x800;
