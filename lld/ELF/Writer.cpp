@@ -1892,42 +1892,65 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     //   }
     // }
     //替换代码
-    if(config->emachine == EM_RISCV)
-    {
-      ElfSym::riscvGlobalPointer = nullptr;
-      if(!config->shared){
-        //扫描小数据段,计算开始和结束地址
-        uint64_t startAddr = UINT64_MAX, endAddr =  0;
-        for(OutputSection *sec : outputSections){
-          // 只选那些要载入内存且不是可执行代码的段
+  if (config->emachine == EM_RISCV) {
+    ElfSym::riscvGlobalPointer = nullptr;
+    if (!config->shared) {
+      // 1) 收集所有可用 GP-relax 的重定位目标地址
+      std::vector<uint64_t> targets;
+      for (OutputSection *osec : outputSections) {
+        for (InputSection *isec : getInputSections(*osec, /*storage*/ storage)) {
+          uint64_t baseAddr = osec->addr + isec->outSecOff;
+          for (const Reloc &r : isec->relocs) {
+            if (isGPRELRelaxable(r.type)) {
+              targets.push_back(baseAddr + r.offset);
+            }
+          }
+        }
+      }
+
+      uint64_t bestBase = 0;
+      if (targets.empty()) {
+        // 回退到“段中点”策略
+        uint64_t startAddr = UINT64_MAX, endAddr = 0;
+        for (OutputSection *sec : outputSections) {
           if (!(sec->flags & SHF_ALLOC) || (sec->flags & SHF_EXECINSTR))
             continue;
           startAddr = std::min(startAddr, sec->addr);
-          endAddr   = std::max(endAddr, sec->addr + sec->size);
+          endAddr   = std::max(endAddr,   sec->addr + sec->size);
         }
-        //如果没有小数据段那么退回到elfheader地址
-        if (startAddr == UINT64_MAX) startAddr = Out::elfHeader->addr;
-        //中点偏移
-        uint64_t gpOffset = (endAddr > startAddr)
-                            ? ((endAddr - startAddr) / 2)
-                            : 0x800;
-        // 3) 在 startAddr + gpOffset 上定义 __global_pointer$
-        //    （如果有 .sdata，就用它的 section，否则用 ELF header）
-        // OutputSection *baseSec = findSection(".sdata");
-        addOptionalRegular("__global_pointer$",
-                           Out::elfHeader,
-                           startAddr + gpOffset,
-                            STV_DEFAULT);
-
-        // 4) 如果启用了 relaxGP，就把符号绑定到 ElfSym
-        //if (config->relaxGP) 
-        {
-          if (Symbol *s = symtab.find("__global_pointer$"))
-            if (s->isDefined())
-              ElfSym::riscvGlobalPointer = cast<Defined>(s);
-        }                    
+        if (startAddr == UINT64_MAX)
+          startAddr = Out::elfHeader->addr;
+        bestBase = startAddr + ((endAddr > startAddr)
+                                 ? ((endAddr - startAddr) / 2)
+                                 : 0x800);
+      } else {
+        // 2) 滑动窗口：在 ±2KiB 范围内找到最多重定位目标的区间
+        llvm::sort(targets);
+        size_t bestCount = 0;
+        for (size_t i = 0, n = targets.size(); i < n; ++i) {
+          uint64_t low  = targets[i];
+          uint64_t high = low + 4095; // window of 4096 bytes
+          size_t count = std::upper_bound(targets.begin(), targets.end(), high)
+                         - (targets.begin() + i);
+          if (count > bestCount) {
+            bestCount = count;
+            bestBase  = low + 2048; // window 中心
+          }
+        }
       }
+
+      // 3) 定义 GP 符号，放在最佳基址
+      addOptionalRegular("__global_pointer$",
+                         Out::elfHeader,
+                         bestBase,
+                         STV_DEFAULT);
+
+      // 4) 将符号传给松弛逻辑
+      if (Symbol *s = symtab.find("__global_pointer$"))
+        if (s->isDefined())
+          ElfSym::riscvGlobalPointer = cast<Defined>(s);
     }
+  }
 
     if (config->emachine == EM_386 || config->emachine == EM_X86_64) {
       // On targets that support TLSDESC, _TLS_MODULE_BASE_ is defined in such a
