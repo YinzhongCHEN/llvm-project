@@ -1892,6 +1892,7 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     //   }
     // }
     //替换代码
+    SmallVector<InputSection *, 0> storage;
   if (config->emachine == EM_RISCV) {
     ElfSym::riscvGlobalPointer = nullptr;
     if (!config->shared) {
